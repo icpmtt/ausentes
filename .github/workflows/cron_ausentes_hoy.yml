@@ -2,8 +2,11 @@ name: Cron Ausentes Hoy
 
 on:
   schedule:
-    # Lun–Vie 08:00 Chile (UTC-3) => 11:00 UTC
-    - cron: "0 11 * * 1-5"
+    # ✅ Lun–Vie 08:00 Chile.
+    # En Chile hay cambio UTC-3 / UTC-4.
+    # Opción práctica: ejecutar en ambos horarios UTC y el cron del servidor evita duplicados.
+    - cron: "0 11 * * 1-5" # 08:00 si Chile está UTC-3
+    - cron: "0 12 * * 1-5" # 08:00 si Chile está UTC-4
   workflow_dispatch:
 
 concurrency:
@@ -15,13 +18,35 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Llamar cron por URL
+      - name: Call cron (with status + body)
         shell: bash
         env:
           CRON_URL: ${{ secrets.CRON_URL }}
           CRON_TOKEN: ${{ secrets.CRON_TOKEN }}
         run: |
           set -euo pipefail
-          URL="${CRON_URL}?token=${CRON_TOKEN}"
+
+          if [[ -z "${CRON_URL:-}" || -z "${CRON_TOKEN:-}" ]]; then
+            echo "Missing secrets: CRON_URL or CRON_TOKEN"
+            exit 1
+          fi
+
+          URL="${CRON_URL}?token=${CRON_TOKEN}&debug=1"
           echo "Calling: $URL"
-          curl -fsS --max-time 30 "$URL"
+
+          # retry a few times in case hosting is slow
+          for i in 1 2 3; do
+            http_code=$(curl -sS -m 30 -w "%{http_code}" -o response.txt "$URL" || true)
+            echo "HTTP: $http_code"
+            echo "Body:"
+            cat response.txt || true
+
+            if [[ "$http_code" =~ ^2 ]]; then
+              exit 0
+            fi
+            echo "Retry $i..."
+            sleep 5
+          done
+
+          echo "Failed after retries"
+          exit 1
