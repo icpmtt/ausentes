@@ -1,0 +1,27 @@
+name: Cron Ausentes Hoy
+
+on:
+  schedule:
+    # Lun–Vie 08:00 Chile (UTC-3) => 11:00 UTC
+    - cron: "0 11 * * 1-5"
+  workflow_dispatch:
+
+concurrency:
+  group: cron-ausentes-hoy
+  cancel-in-progress: true
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Llamar cron por URL
+        shell: bash
+        env:
+          CRON_URL: ${{ secrets.CRON_URL }}
+          CRON_TOKEN: ${{ secrets.CRON_TOKEN }}
+        run: |
+          set -euo pipefail
+          URL="${CRON_URL}?token=${CRON_TOKEN}"
+          echo "Calling: $URL"
+          curl -fsS --max-time 30 "$URL"
