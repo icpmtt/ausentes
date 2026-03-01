@@ -1,52 +1,43 @@
-name: Cron Ausentes Hoy
+name: Cron Ausencias Hoy (Impacto + XLS)
 
 on:
   schedule:
-    # ✅ Lun–Vie 08:00 Chile.
-    # En Chile hay cambio UTC-3 / UTC-4.
-    # Opción práctica: ejecutar en ambos horarios UTC y el cron del servidor evita duplicados.
-    - cron: "0 11 * * 1-5" # 08:00 si Chile está UTC-3
-    - cron: "0 12 * * 1-5" # 08:00 si Chile está UTC-4
+    - cron: "*/5 * * * *"   # Cada 5 minutos (UTC). El PHP decide y solo envía a las 07:55 America/Santiago.
   workflow_dispatch:
 
 concurrency:
-  group: cron-ausentes-hoy
+  group: cron-ausencias-hoy
   cancel-in-progress: true
 
 jobs:
-  run:
+  ejecutar:
     runs-on: ubuntu-latest
     timeout-minutes: 5
+
     steps:
-      - name: Call cron (with status + body)
-        shell: bash
+      - name: Llamar cron por HTTP
         env:
           CRON_URL: ${{ secrets.CRON_URL }}
           CRON_TOKEN: ${{ secrets.CRON_TOKEN }}
         run: |
           set -euo pipefail
 
-          if [[ -z "${CRON_URL:-}" || -z "${CRON_TOKEN:-}" ]]; then
-            echo "Missing secrets: CRON_URL or CRON_TOKEN"
+          if [ -z "${CRON_URL:-}" ] || [ -z "${CRON_TOKEN:-}" ]; then
+            echo "Faltan secrets: CRON_URL y/o CRON_TOKEN"
             exit 1
           fi
 
-          URL="${CRON_URL}?token=${CRON_TOKEN}&debug=1"
-          echo "Calling: $URL"
+          # Si la URL ya trae querystring, usamos &; si no, usamos ?
+          SEP='?'
+          case "$CRON_URL" in
+            *\?*) SEP='&' ;;
+          esac
 
-          # retry a few times in case hosting is slow
-          for i in 1 2 3; do
-            http_code=$(curl -sS -m 30 -w "%{http_code}" -o response.txt "$URL" || true)
-            echo "HTTP: $http_code"
-            echo "Body:"
-            cat response.txt || true
+          FINAL_URL="${CRON_URL}${SEP}token=${CRON_TOKEN}"
 
-            if [[ "$http_code" =~ ^2 ]]; then
-              exit 0
-            fi
-            echo "Retry $i..."
-            sleep 5
-          done
+          echo "GET $FINAL_URL"
 
-          echo "Failed after retries"
-          exit 1
+          # Reintentos suaves por si hay microcortes
+          curl -fsS --retry 3 --retry-delay 5 --connect-timeout 15 --max-time 90 \
+            "$FINAL_URL" | head -c 2000
+          echo ""
